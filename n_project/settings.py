@@ -1,3 +1,10 @@
+import io
+import os
+from urllib.parse import urlparse
+
+import environ
+from google.cloud import secretmanager
+
 """
 Django settings for n_project project.
 
@@ -22,13 +29,76 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY')
+# [START gaestd_py_django_secret_config]
+env = environ.Env(DEBUG=(bool, False))
+env_file = os.path.join(BASE_DIR, ".env")
+
+if os.path.isfile(env_file):
+    # Use a local secret file, if provided
+
+    env.read_env(env_file)
+# [START_EXCLUDE]
+elif os.getenv("TRAMPOLINE_CI", None):
+    # Create local settings if running with CI, for unit testing
+
+    placeholder = (
+        f"SECRET_KEY=a\n"
+        f"DATABASE_URL=sqlite://{os.path.join(BASE_DIR, 'db.sqlite3')}"
+    )
+    env.read_env(io.StringIO(placeholder))
+# [END_EXCLUDE]
+elif os.environ.get("GOOGLE_CLOUD_PROJECT", None):
+    # Pull secrets from Secret Manager
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+    client = secretmanager.SecretManagerServiceClient()
+    settings_name = os.environ.get("SETTINGS_NAME", "django_settings_n-project")
+    name = f"projects/{project_id}/secrets/{settings_name}/versions/latest"
+    payload = client.access_secret_version(name=name).payload.data.decode("UTF-8")
+
+    env.read_env(io.StringIO(payload))
+else:
+    raise Exception("No local .env or GOOGLE_CLOUD_PROJECT detected. No secrets found.")
+# [END gaestd_py_django_secret_config]
+
+SECRET_KEY = env("SECRET_KEY")
+
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG')
+# Change this to "False" when you are ready for production
+DEBUG = env("DEBUG")
 
-ALLOWED_HOSTS = []
+# [START gaestd_py_django_csrf]
+# SECURITY WARNING: It's recommended that you use this when
+# running in production. The URL will be known once you first deploy
+# to App Engine. This code takes the URL and converts it to both these settings formats.
+APPENGINE_URL = env("APPENGINE_URL", default=None)
+if APPENGINE_URL:
+    # Ensure a scheme is present in the URL before it's processed.
+    if not urlparse(APPENGINE_URL).scheme:
+        APPENGINE_URL = f"https://{APPENGINE_URL}"
 
+    ALLOWED_HOSTS = [
+        # ここに追加
+        urlparse(APPENGINE_URL).netloc,
+    ]
+
+    DATABASES = {"default": env.db()}
+    CSRF_TRUSTED_ORIGINS = [APPENGINE_URL]
+    SECURE_SSL_REDIRECT = True
+else:
+    ALLOWED_HOSTS = ["*"]
+
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',# instead of the following.
+            'NAME': 'n-project',
+            'USER': os.getenv('DATABASE_USER'),
+            'PASSWORD': os.getenv('DATABASE_PASSWORD'),
+            'HOST': '127.0.0.1',
+            'PORT': '13306',
+        }
+    }
+# [END gaestd_py_django_csrf]
 
 # Application definition
 
@@ -58,6 +128,7 @@ MIDDLEWARE = [
 
 CORS_ORIGIN_WHITELIST = [
     "http://localhost:3000",
+    "https://n-project-ideas-br5v.vercel.app"
 ]
 
 SIMPLE_JWT = {
@@ -94,15 +165,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'n_project.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/4.1/ref/settings/#databases
 
 default_dburl = 'sqlite:///' + str(BASE_DIR / "db.sqlite3")
 
-DATABASES = {
-    'default': config('DATABASE_URL', default=default_dburl, cast=dburl),
-}
+# DATABASES = {
+#     'default': config('DATABASE_URL', default=default_dburl, cast=dburl),
+# }
+
 
 
 # Password validation
@@ -139,8 +210,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.1/howto/static-files/
 
-STATIC_URL = 'static/'
-STATIC_ROOT = str(BASE_DIR/'staticfiles')
+
+STATIC_URL = "/static/"#配信用のディレクトリ名
+STATIC_ROOT = "static"#collectstaticを実行した時にstaticファイルがコピーされるディレクトリのパス
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field
