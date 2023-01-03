@@ -78,7 +78,6 @@ if APPENGINE_URL:
         APPENGINE_URL = f"https://{APPENGINE_URL}"
 
     ALLOWED_HOSTS = [
-        # ここに追加
         urlparse(APPENGINE_URL).netloc,
     ]
 
